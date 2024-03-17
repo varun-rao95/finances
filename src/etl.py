@@ -137,7 +137,7 @@ def dump_sofi_csv():
                         row["Description"],
                         row["Amount"],
                         row["Type"],
-                        "SOFI Checking",
+                        account_name,
                     ),
                 )
 
