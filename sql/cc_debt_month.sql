@@ -7,7 +7,7 @@ SELECT
 FROM
   transactions
 WHERE
-  AccountName = <accountname>  #  "Customized Cash Rewards Visa Signature - 4474", "Travel Rewards Visa Signature - 8166",...
+  AccountName = <accountname>  --  "Customized Cash Rewards Visa Signature - 4474", "Travel Rewards Visa Signature - 8166",...
 GROUP BY
   1, 2
 ORDER BY 
