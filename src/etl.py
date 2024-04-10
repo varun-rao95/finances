@@ -1,4 +1,8 @@
 # coding: utf-8
+
+# TODO:
+# insert all new transactions per account
+# call as script with args
 import csv
 import sqlite3
 from datetime import datetime
@@ -11,6 +15,9 @@ def convert_date_format(date_str, from_="intuit"):
     if from_ == "intuit":
         # Parse the date from MM/dd/YYYY format
         dt = datetime.strptime(date_str, "%m/%d/%Y")
+    elif from_ == "sofi":
+        # Parse the date from YYYY-MM-dd format
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
     else:
         # Parse the date from MM/dd format
         year = "2023"
@@ -33,7 +40,7 @@ def dump_mint_csv():
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
-                    convert_date_format(row["Date"]),
+                    convert_date_format(row["Date"], from_="intuit"),
                     row["Description"],
                     row["Original Description"],
                     row["Amount"],
@@ -107,6 +114,31 @@ def dump_mission_lane_statement(dry_run=False):
     return rows
 
 
+def dump_sofi_csv():
+    # Path to your CSV file
+    csv_file_paths = (("SOFI Checking", "/Users/varunrao/Downloads/SOFI_checking.csv"), ("SOFI Saving", "/Users/varunrao/Downloads/SOFI_savings.csv"))
+    # Open the CSV file and insert data into the database
+
+    for x in csv_file_paths:
+        account_name, csv_file_path = x
+        with open(csv_file_path, newline="", encoding="utf-8") as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                cursor.execute(
+                    """
+                    INSERT INTO transactions (Date, Description, Amount, TransactionType, AccountName)
+                    VALUES (?, ?, ?, ?, ?)
+                """,
+                    (
+                        convert_date_format(row["Date"], from_="sofi"),
+                        row["Description"],
+                        row["Amount"],
+                        row["Type"],
+                        "SOFI Checking"
+                    ),
+                )
+
+
 if __name__ == "__main__":
     # Connect to SQLite database (or create it if it doesn't exist)
     conn = sqlite3.connect("mint_transactions.db")
@@ -130,7 +162,9 @@ if __name__ == "__main__":
     )
 
     # dump_mint_csv()
-    dump_mission_lane_statement()
+    # dump_mission_lane_statement()
+    dump_sofi_csv()
+
 
     # Commit changes and close the connection
     conn.commit()
