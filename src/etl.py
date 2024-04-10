@@ -127,15 +127,22 @@ def dump_sofi_csv():
         with open(csv_file_path, newline="", encoding="utf-8") as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
+                amnt = float(row["Amount"])
+                if float(row["Amount"]) < 0:
+                    ttype = "debit"
+                    amnt = amnt * -1
+                else:
+                    ttype = "credit"
                 cursor.execute(
                     """
-                    INSERT INTO transactions (Date, Description, Amount, TransactionType, AccountName)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO transactions (Date, Description, Amount, TransactionType, Category, AccountName)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 """,
                     (
                         convert_date_format(row["Date"], from_="sofi"),
                         row["Description"],
-                        row["Amount"],
+                        amnt,
+                        ttype,
                         row["Type"],
                         account_name,
                     ),
