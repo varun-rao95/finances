@@ -116,7 +116,10 @@ def dump_mission_lane_statement(dry_run=False):
 
 def dump_sofi_csv():
     # Path to your CSV file
-    csv_file_paths = (("SOFI Checking", "/Users/varunrao/Downloads/SOFI_checking.csv"), ("SOFI Saving", "/Users/varunrao/Downloads/SOFI_savings.csv"))
+    csv_file_paths = (
+        ("SOFI Checking", "/Users/varunrao/Downloads/SOFI_checking.csv"),
+        ("SOFI Saving", "/Users/varunrao/Downloads/SOFI_savings.csv"),
+    )
     # Open the CSV file and insert data into the database
 
     for x in csv_file_paths:
@@ -134,7 +137,7 @@ def dump_sofi_csv():
                         row["Description"],
                         row["Amount"],
                         row["Type"],
-                        "SOFI Checking"
+                        "SOFI Checking",
                     ),
                 )
 
@@ -164,7 +167,6 @@ if __name__ == "__main__":
     # dump_mint_csv()
     # dump_mission_lane_statement()
     dump_sofi_csv()
-
 
     # Commit changes and close the connection
     conn.commit()
