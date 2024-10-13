@@ -149,6 +149,46 @@ def dump_sofi_csv():
                 )
 
 
+def dump_apple_card_transactions():
+    # Path to your CSV file (modify this to point to the correct location)
+    csv_file_path = "/Users/varunrao/Downloads/apple_card_transactions_{month}.csv"
+    # Open the CSV file and insert data into the database
+    for month in [
+        "2024-09",
+        "2024-10",
+        ...,
+    ]:  # modify this to include the desired months
+        with open(
+            csv_file_path.format(month=month), newline="", encoding="utf-8"
+        ) as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                # Transform the data to match your existing database schema
+                date = convert_date_format(row["Transaction Date"], from_="apple")
+                description = row["Description"]
+                amount = float(row["Amount (USD)"])
+                transaction_type = "debit" if amount < 0 else "credit"
+                merchant = row["Merchant"]
+                category = row["Category"]
+                account_name = "Apple Card"
+                # Load the data into the database
+                cursor.execute(
+                    """
+                    INSERT INTO transactions (Date, Description, Amount, TransactionType, Merchant, Category, AccountName)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        date,
+                        description,
+                        amount,
+                        transaction_type,
+                        merchant,
+                        category,
+                        account_name,
+                    ),
+                )
+
+
 if __name__ == "__main__":
     # Connect to SQLite database (or create it if it doesn't exist)
     conn = sqlite3.connect("mint_transactions.db")
