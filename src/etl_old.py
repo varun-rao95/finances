@@ -6,6 +6,7 @@
 import csv
 import sqlite3
 from datetime import datetime
+import os
 
 from PIL import Image
 import pytesseract
@@ -54,9 +55,11 @@ def dump_mint_csv():
 
 
 def dump_mission_lane_statement(dry_run=False):
-    # Path to your PDF file
+    # Path to your images
+    # screenshot each column in the mission lane statement
+    # date, desc, amount
     img_paths = [
-        f"/Users/varunrao/Downloads/mission_lane_{a}_sep.png"
+        os.path.expanduser(f"~/Downloads/mission_lane_{a}_jan.png")
         for a in ("date", "desc", "amount")
     ]
 
@@ -94,19 +97,35 @@ def dump_mission_lane_statement(dry_run=False):
             f"May not have parsed all the rows - parsed total {total_amounts_parsed[-1]} vs total {total}"
         )
 
-    # add transaction type and account name
+    # Add transaction type and account name to each row
     for row in rows:
         row.append("credit")
         row.append("Mission Lane")
 
     if dry_run:
         print(rows)
+        for row in [list(x) for x in rows]:
+            if "2023-12" not in row[0]:
+                row[0] = row[0].replace("2023", "2024")
+                print(row)
     else:
-        for row in [tuple(x) for x in rows]:
+        for row in [list(x) for x in rows]:
+            # Delete the exact record if it already exists, using Date, OriginalDescription, and Amount
+            # cursor.execute(
+            #     """
+            #     DELETE FROM transactions
+            #     WHERE Date = ? AND OriginalDescription = ? AND Amount = ? AND TransactionType = ? AND AccountName = ?
+            #     """,
+            #     row,  # row now includes Date, OriginalDescription, Amount, TransactionType, and AccountName
+            # )
+            if "2023-12" not in row[0]:
+                row[0] = row[0].replace("2023", "2024")
+                print(row)
+            # Insert the corrected row
             cursor.execute(
                 """
-                    INSERT INTO transactions (Date, OriginalDescription, Amount, TransactionType, AccountName)
-                    VALUES (?, ?, ?, ?, ?)
+                INSERT INTO transactions (Date, OriginalDescription, Amount, TransactionType, AccountName)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 row,
             )
@@ -212,8 +231,8 @@ if __name__ == "__main__":
     )
 
     # dump_mint_csv()
-    # dump_mission_lane_statement()
-    dump_sofi_csv()
+    dump_mission_lane_statement(dry_run=False)
+    # dump_sofi_csv()
 
     # Commit changes and close the connection
     conn.commit()
