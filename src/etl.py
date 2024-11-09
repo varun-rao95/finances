@@ -3,15 +3,15 @@ import sqlite3
 import os
 from constants import MONARCH_ACCOUNT_NAME_MAPPING  # Import the mapping
 
+# Set dry_run mode
+dry_run = True  # Set to False to perform actual insertion
+
 # Load the Monarch CSV file
 monarch_df = pd.read_csv(os.path.expanduser("~/Downloads/all_monarch_txns.csv"))
 
 # Establish a connection to the SQLite database
 conn = sqlite3.connect("mint_transactions.db")
 cursor = conn.cursor()
-
-# Set dry_run mode
-dry_run = True  # Set to False to perform actual insertion
 
 # Retrieve the latest transaction date for each account
 latest_dates = {}
