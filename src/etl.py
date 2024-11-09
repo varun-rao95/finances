@@ -31,21 +31,8 @@ filtered_df = monarch_df[
 
 # Dry-run: display transactions that would be inserted
 if dry_run:
-    print("Dry-run mode enabled. The following records would be inserted:")
-    print(
-        filtered_df[
-            [
-                "Date",
-                "Merchant",
-                "Original Statement",
-                "Amount",
-                "Category",
-                "Account",
-                "Tags",
-                "Notes",
-            ]
-        ]
-    )
+    print("Dry-run mode enabled. Records dumped to your downloads folder for review:")
+    filtered_df.to_csv(os.path.expanduser("~/Downloads/filtered_monarch_txns.csv"))
 else:
     # Insert the filtered data into the SQLite database
     for index, row in filtered_df.iterrows():
