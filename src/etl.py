@@ -1,11 +1,12 @@
 import pandas as pd
 import sqlite3
+import os
 
 # Load the Monarch CSV file
-monarch_df = pd.read_csv("path_to_monarch_csv.csv")
+monarch_df = pd.read_csv(os.expanduser("~/Downloads/all_monarch_txns.csv"))
 
 # Establish a connection to the SQLite database
-conn = sqlite3.connect("path_to_your_database.db")
+conn = sqlite3.connect("mint_transactions.db")
 cursor = conn.cursor()
 
 # Retrieve the latest transaction date for each account
