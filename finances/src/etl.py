@@ -4,13 +4,15 @@ import os
 from constants import MONARCH_ACCOUNT_NAME_MAPPING  # Import the mapping
 
 # Set dry_run mode
-dry_run = True  # Set to False to perform actual insertion
+dry_run = False  # Set to False to perform actual insertion
 
 # Load the Monarch CSV file
 monarch_df = pd.read_csv(os.path.expanduser("~/Downloads/all_monarch_txns.csv"))
 
 # Establish a connection to the SQLite database
-conn = sqlite3.connect("mint_transactions.db")
+script_dir = os.path.dirname(os.path.abspath(__file__))
+db_path = os.path.join(script_dir, "mint_transactions.db")
+conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 
 # Retrieve the latest transaction date for each account
@@ -46,7 +48,7 @@ else:
                 row["Date"],
                 row["Merchant"],
                 row["Original Statement"],
-                row["Amount"],
+                abs(row["Amount"]),
                 "credit" if row["Amount"] > 0 else "debit",
                 row["Category"],
                 row["Account"],

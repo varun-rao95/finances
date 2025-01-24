@@ -9,14 +9,13 @@ dry_run = True  # Set to False to perform actual database insertion/updates
 # Load the Monarch CSV file
 monarch_df = pd.read_csv(os.path.expanduser("~/Downloads/all_monarch_txns.csv"))
 
-# Filter Monarch data to include only transactions from Sep 9, 2023 onwards
-monarch_df = monarch_df[monarch_df["Date"] >= "2023-09-09"]
-
 # Map Monarch account names to match database naming
 monarch_df["Account"] = monarch_df["Account"].map(MONARCH_ACCOUNT_NAME_MAPPING)
 
 # Connect to the SQLite database
-conn = sqlite3.connect("mint_transactions.db")
+script_dir = os.path.dirname(os.path.abspath(__file__))
+db_path = os.path.join(script_dir, "mint_transactions.db")
+conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 
 # Step 1: Ensure an archive table exists with the same structure as transactions
@@ -32,7 +31,7 @@ if not dry_run:
 overlapping_mint_transactions = pd.read_sql_query(
     """
     SELECT * FROM transactions
-    WHERE Date >= '2023-09-09'
+    WHERE Date < '2023-09-09'
 """,
     conn,
 )
