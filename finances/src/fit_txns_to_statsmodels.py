@@ -44,7 +44,7 @@ def plot_spend(df, monthly=False, weekly=False, daily=False, plot=True):
 
     if monthly:
         # Calculate monthly spend
-        df["month"] = df["Date"].dt.month
+        df["month"] = df["Date"].dt.to_period("M")
         spend = df.groupby("month")["Amount"].sum().reset_index()
         xlabel = "Montly Spend"
 
