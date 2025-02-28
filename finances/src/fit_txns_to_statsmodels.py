@@ -3,12 +3,13 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy.stats import gamma, norm, poisson, nbinom
+from scipy.stats import gamma, norm, poisson, nbinom, lognorm
 import statsmodels.api as sm
 import statsmodels
 from sklearn.model_selection import GridSearchCV
 from sklearn.neighbors import KernelDensity
 from scipy.stats import gaussian_kde
+from scipy.signal import argrelextrema
 
 TXNS_FILE = "spend_txns.csv"
 DATA_DIR = os.path.join("..", "data")
@@ -94,10 +95,11 @@ def plot_spend(df, monthly=False, weekly=False, daily=False, plot=True):
 
 
 def analyze_daily_patterns(spend_df, plot_cv_search=False):
-    data = spend_df["Amount"].values[:, None]
+    data = spend_df["Amount"].values[:, None]  # Reshape data to (N, 1) for KDE fitting
+
+    # Set up GridSearchCV for bandwidth selection
     bandwidths = np.linspace(0.1, 30, 120)
     params = {"bandwidth": bandwidths}
-
     grid = GridSearchCV(
         KernelDensity(kernel="gaussian"), params, cv=5
     )  # 5-fold cross-validation
@@ -119,15 +121,33 @@ def analyze_daily_patterns(spend_df, plot_cv_search=False):
         plt.grid(True)
         plt.show()
 
+    # Fit the KDE with the best bandwidth
+    kde = gaussian_kde(
+        data.reshape(1, -1),
+        bw_method=10 / np.std(data),  # 10 is way more spiky so good for bucketing
+    )
+
+    # Create an array of evaluation points for the KDE
+    x = np.linspace(min(data), max(data), 1000)
+    x = x.T  # Reshape to (1, 1000)
+
+    # Evaluate the KDE at the points in x
+    kde_values = kde.evaluate(x)
+
+    # Find the local minima (troughs) to define bucket boundaries
+    minima = argrelextrema(kde_values, np.less)[0]  # Local minima indices
+
     kde = gaussian_kde(data.reshape(1, -1))
     bw_default = kde.factor * np.std(data)
     print("Default bandwidth:", bw_default)
 
-    best_bandwidth = grid.best_params_["bandwidth"]
+    best_bandwidths = [grid.best_params_["bandwidth"], 20, 10, 100, 90]
     # [2.0, 5.0, 8.0, bw_default]
-    print(f"Optimal bandwidth: {best_bandwidth}")
+    print(f"Optimal bandwidth: {best_bandwidths}")
 
-    bw_adjust = [best_bandwidth / bw_default]  # assuming you know or compute bw_default
+    bw_adjust = [
+        best_bandwidth / bw_default for best_bandwidth in best_bandwidths
+    ]  # assuming you know or compute bw_default
     print(f"Optimal bw_adjust: {bw_adjust}")
 
     plt.figure(figsize=(15, 10))
@@ -150,51 +170,14 @@ def analyze_daily_patterns(spend_df, plot_cv_search=False):
     plt.xlabel("Amount")
     plt.ylabel("Density")
     plt.legend()
-    # line = kde.lines[0]
-    # x_coord, y_coord = line.get_data()
-    # # Get local minima between modes
-    # local_min_idx = np.argmin(
-    #     y_coord[
-    #         np.logical_and(
-    #             x_coord > x_coord[np.argmax(y_coord)],
-    #             x_coord
-    #             < x_coord[np.argmax(y_coord[x_coord > x_coord[np.argmax(y_coord)]])],
-    #         )
-    #     ]
-    # )
-    # threshold = x_coord[local_min_idx]
-    # print(threshold)
 
-    # # Second subplot: Temporal pattern
-    # plt.subplot(2, 1, 2)
-    # # Look at day of week patterns
-    # spend_df["day_of_week"] = spend_df.index.dayofweek
-    # sns.boxplot(data=spend_df, x="day_of_week", y="Amount")
-    # plt.title("Spend Distribution by Day of Week")
-    # plt.xlabel("Day of Week (0=Monday)")
-
-    # plt.tight_layout()
-
-    # # Print some analysis
-    # high_spend = spend_df[spend_df["Amount"] > threshold]
-    # low_spend = spend_df[spend_df["Amount"] <= threshold]
-    # print(f"Two main spending modes identified:")
-    # print(
-    #     f"Lower spend mode: mean=${low_spend['Amount'].mean():.2f}, n={len(low_spend)}"
-    # )
-    # print(
-    #     f"Higher spend mode: mean=${high_spend['Amount'].mean():.2f}, n={len(high_spend)}"
-    # )
-    # print(f"\nMost common days for higher spending:")
-    # print(high_spend["day_of_week"].value_counts().sort_index())
+    return x[0, minima]  # bucket thresholds
 
 
 # Define a function to calculate likelihood
 def spend_likelihood(amount, spend):
     mean_spend = spend["Amount"].mean()
     std_spend = spend["Amount"].std()
-
-    print(f"Normal mean, std of spend: {mean_spend:.2f}, {std_spend:.2f}")
 
     return norm.sf(amount, loc=mean_spend, scale=std_spend)
 
@@ -230,8 +213,37 @@ def sophis_spend_likelihood(amount, model, mean_txn_value=100):
         return 1 - model.cdf(amount)
 
 
+def sophis_spend_likelihood_monte_carlo(
+    amount, bucket_models, avg_bucket_spend, num_simulations=10_000
+):
+    """
+    Monte Carlo simulation of spend likelihood using the best-fit models for each bucket.
+    Returns the likelihood of spending more than `amount`.
+    """
+    simulated_spend = simulate_daily_spend(
+        bucket_models, avg_bucket_spend, num_simulations
+    )
+    if isinstance(amount, list):  # TODO: iterable
+        probability = [np.mean(simulated_spend > spend) for spend in amount]
+        for spend, prob in zip(amount, probability):
+            print(f"Probability of spending more than {spend:.2f}: {prob:.4f}")
+    else:
+        probability = np.mean(simulated_spend > amount)
+        print(f"Probability of spending more than {amount:.2f}: {probability:.4f}")
+    return probability
+
+
 def get_txns_per_day(df, colname="Transactions"):
     df_transactions_per_day = df.groupby("Date").size().reset_index(name=colname)
+    df_transactions_per_day.index = df_transactions_per_day["Date"]
+    new_index = pd.date_range(
+        start=df_transactions_per_day.index.min(),
+        end=df_transactions_per_day.index.max(),
+        freq="D",
+    )
+    df_transactions_per_day = df_transactions_per_day.reindex(new_index, fill_value=0)
+    df_transactions_per_day["Date"] = df_transactions_per_day.index
+
     return df_transactions_per_day
 
 
@@ -239,24 +251,24 @@ def find_best_fit_model(df, df_txns_per_day, colname="Transactions"):
     # Fit a Poisson distribution
     poisson_model_results = sm.Poisson(
         df_txns_per_day[colname], np.ones(len(df_txns_per_day))
-    ).fit()
+    ).fit(disp=0)
 
     # Fit a Negative Binomial distribution
     nbinom_model_results = sm.NegativeBinomial(
         df_txns_per_day[colname], np.ones(len(df_txns_per_day))
-    ).fit()
+    ).fit(disp=0)
 
     # Fit a Gamma distribution
     gamma_model_results = sm.GLM(
         df["Amount"],
         sm.add_constant(np.ones(len(df))),
         family=sm.families.Gamma(),
-    ).fit()
+    ).fit(disp=0)
 
     # Fit a Log-Normal distribution
     lognorm_model_results = sm.OLS(
         np.log(df["Amount"]), sm.add_constant(np.ones(len(df)))
-    ).fit()
+    ).fit(disp=0)
 
     models = {
         "Poisson": poisson_model_results,
@@ -287,6 +299,70 @@ def simulate_spend(model, n=1000, plot=False):
     plt.show()
 
     return samples
+
+
+def simulate_daily_spend(bucket_models, avg_bucket_spend, num_simulations=10_000):
+    """
+    Monte Carlo simulation of daily spend using the best-fit models
+    for each bucket of transaction amounts.
+    """
+    daily_spends = np.zeros(num_simulations)
+
+    for bucket, model_results in bucket_models.items():
+        # Extract parameters based on model type
+        if isinstance(
+            model_results,
+            statsmodels.discrete.discrete_model.NegativeBinomialResultsWrapper,
+        ):
+            # Negative Binomial model
+            predicted_mean_nb = model_results.predict()[0]
+            alpha = model_results.scale
+
+            n_param = 1.0 / alpha
+            p_param = n_param / (n_param + predicted_mean_nb)
+
+            # Simulate the daily transaction counts for this bucket
+            counts = nbinom.rvs(n_param, p_param, size=num_simulations)
+            spend_for_bucket = counts * avg_bucket_spend[bucket]
+
+        elif isinstance(
+            model_results, statsmodels.discrete.discrete_model.PoissonResultsWrapper
+        ):
+            # Poisson model
+            predicted_mean_poisson = model_results.predict()[0]
+
+            # Simulate the daily transaction counts for this bucket
+            counts = poisson.rvs(predicted_mean_poisson, size=num_simulations)
+            spend_for_bucket = counts * avg_bucket_spend[bucket]
+
+        elif isinstance(
+            model_results, statsmodels.genmod.generalized_linear_model.GLMResultsWrapper
+        ):
+            # Gamma model
+            shape = model_results.params[
+                0
+            ]  # For Gamma, the shape is typically the intercept
+            scale = model_results.scale  # Scale parameter from GLM
+
+            # Simulate the daily transaction counts for this bucket (assume the count is Poisson distributed)
+            spend_for_bucket = gamma.rvs(shape, scale=scale, size=num_simulations)
+
+        elif isinstance(
+            model_results, statsmodels.regression.linear_model.RegressionResultsWrapper
+        ):
+            # Log-Normal model
+            mean_log = model_results.params[0]  # Intercept
+            std_log = model_results.bse[0]  # Standard error from OLS
+
+            # Simulate the daily transaction amounts for this bucket
+            spend_for_bucket = lognorm.rvs(
+                std_log, scale=np.exp(mean_log), size=num_simulations
+            )
+
+        # Add to the total daily spend
+        daily_spends += spend_for_bucket
+
+    return daily_spends
 
 
 def compare_distribution_for_two_time_periods(df1, df2):
@@ -333,6 +409,14 @@ def filter_category(df, categories=[]):
     return df[~df["Category"].isin(categories)]
 
 
+def kde_bucket_thresholds(amount, bucket_thresholds):
+    for idx, thresh in enumerate(bucket_thresholds):
+        if amount < thresh:
+            return idx
+
+    return len(bucket_thresholds)
+
+
 def main():
     df_2024 = load_data(filter_by=">=2024")
     df_2023 = load_data(filter_by="<=2023")
@@ -353,21 +437,107 @@ def main():
 
     # Plot daily spend distribution
     daily_spend = plot_spend(df, monthly=False, weekly=False, daily=True, plot=False)
-    analyze_daily_patterns(daily_spend)
+    bucket_thresholds = analyze_daily_patterns(df)
+    bucket_thresholds = bucket_thresholds[:6]
+
+    df["bucket"] = df["Amount"].apply(
+        lambda x: kde_bucket_thresholds(x, bucket_thresholds)
+    )
+
+    bucket_models = {}
+    avg_bucket_spend = {}
+
+    # Loop through each bucket and find the best fit model
+    for idx, threshold in enumerate(bucket_thresholds):
+        # Select the data for the current bucket
+        bucket_data = df[df["bucket"] == idx]
+
+        if len(bucket_data) == 0:
+            continue  # Skip empty buckets
+
+        # Compute df_txns_per_day for this bucket (daily transaction counts)
+        bucket_txns_per_day = (
+            get_txns_per_day(bucket_data)
+            .groupby("Date")["Transactions"]
+            .sum()
+            .reset_index()
+        )
+        bucket_data = bucket_data.groupby("Date")["Amount"].sum().reset_index()
+        bucket_data.index = bucket_data["Date"]
+        new_index = pd.date_range(
+            start=bucket_data.index.min(), end=bucket_data.index.max(), freq="D"
+        )
+        bucket_data = bucket_data.reindex(new_index, fill_value=0.01)
+        bucket_data["Date"] = bucket_data.index
+
+        # Call find_best_fit_model for each bucket
+        best_model = find_best_fit_model(bucket_data, bucket_txns_per_day)
+
+        # Store the best model for this bucket
+        bucket_models[threshold] = best_model
+
+        # Calculate average spend for this bucket
+        avg_bucket_spend[threshold] = bucket_data[bucket_data["Amount"] != 0.01][
+            "Amount"
+        ].mean()
+
+    # Group by date and bucket to get daily counts
+    daily_counts = (
+        df.groupby(["Date", "bucket"])["Amount"].size().reset_index(name="count")
+    )
+
+    # Pivot so each row is a day, and each column is the count for that bucket
+    daily_bucket_counts = daily_counts.pivot_table(
+        index="Date", columns="bucket", values="count", fill_value=0
+    )
+
+    spend_amounts = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    likelihoods = sophis_spend_likelihood_monte_carlo(
+        spend_amounts, bucket_models, avg_bucket_spend
+    )
+    return
+
+    print(
+        f"Mean daily spend w/ std: {daily_spend['Amount'].mean():.2f} {daily_spend['Amount'].std():.2f}"
+    )
 
     # Plot weekly spend distribution
-    weekly_spend = plot_spend(df, monthly=False, weekly=True, daily=False, plot=True)
+    # weekly_spend = plot_spend(df, monthly=False, weekly=True, daily=False, plot=True)
+    # print(
+    #     f"Mean weekly spend w/ std: {weekly_spend['Amount'].mean():.2f} {weekly_spend['Amount'].std():.2f}"
+    # )
 
     # Plot monthly spend distribution
     monthly_spend = plot_spend(df, monthly=True, weekly=False, daily=False, plot=True)
+    print(
+        f"Mean monthly spend w/ std: {monthly_spend['Amount'].mean():.2f} {monthly_spend['Amount'].std():.2f}"
+    )
 
+    # answer likelihood to spend amount in week
+    print(
+        f"Likelihood to spend ${100} this day: {spend_likelihood(100, daily_spend):.4f}"
+    )
+    # answer likelihood to spend amount in week
+    print(
+        f"Likelihood to spend ${200} this day: {spend_likelihood(200, daily_spend):.4f}"
+    )
+    print(
+        f"Likelihood to spend <$10 this day: {1-spend_likelihood(10, daily_spend):.4f}"
+    )
+    print(
+        f"Likelihood to spend <$30 this day: {1-spend_likelihood(30, daily_spend):.4f}"
+    )
+    print(
+        f"Likelihood to spend <$50 this day: {1-spend_likelihood(50, daily_spend):.4f}"
+    )
+    print(f"Likelihood to spend $0 this day: {1-spend_likelihood(0, daily_spend):.4f}")
     # answer likelihood to spend amount in week
     print(
         f"Likelihood to spend ${1000} this week: {spend_likelihood(1000, weekly_spend):.4f}"
     )
     # answer likelihood to spend amount in week
     print(
-        f"Likelihood to spend ${6000} this month: {spend_likelihood(6000, weekly_spend):.4f}"
+        f"Likelihood to spend ${6000} this week: {spend_likelihood(6000, weekly_spend):.4f}"
     )
 
     # TODO: do the same with txns per week and per month
