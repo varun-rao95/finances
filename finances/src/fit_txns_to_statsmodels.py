@@ -113,7 +113,7 @@ def plot_spend(df, monthly=False, weekly=False, daily=False, plot=True):
     return spend
 
 
-def analyze_daily_patterns(spend_df, plot_cv_search=False):
+def analyze_daily_patterns(spend_df, plot_cv_search=False, plot=False):
     """
     Analyzes daily spend patterns using KDE with bandwidth selection via GridSearchCV.
     Also plots the histogram of daily spend with various bandwidth adjustments.
@@ -122,6 +122,7 @@ def analyze_daily_patterns(spend_df, plot_cv_search=False):
         spend_df (pd.DataFrame): A DataFrame containing 'Amount' for daily spending.
         plot_cv_search (bool): If True, plots the cross-validated log-likelihood
             versus bandwidth.
+        plot (bool): If True, plots the distribution w/ kde lines for given bandwidth.
 
     Returns:
         np.ndarray: The array of daily spend 'bucket thresholds' found by local minima
@@ -176,6 +177,9 @@ def analyze_daily_patterns(spend_df, plot_cv_search=False):
     bw_adjust = [best_bw / bw_default for best_bw in best_bandwidths]
     print(f"Optimal bw_adjust: {bw_adjust}")
 
+    if not plot:
+        return x[0, minima]
+
     # Final plot with multiple KDE lines
     plt.figure(figsize=(15, 10))
     sns.histplot(
@@ -196,7 +200,7 @@ def analyze_daily_patterns(spend_df, plot_cv_search=False):
     plt.legend()
     plt.show()
 
-    return x[minima]  # The local minima "bucket thresholds"
+    return x[0, minima]  # The local minima "bucket thresholds"
 
 
 def spend_likelihood(amount, spend):
