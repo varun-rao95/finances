@@ -628,6 +628,30 @@ def fit_models_for_each_bucket(df, bucket_thresholds):
     return bucket_models, avg_bucket_spend
 
 
+def empirical_cdf(data):
+    """Returns x, cdf(x) for the given data."""
+    sorted_data = np.sort(data)
+    cdf = np.arange(1, len(sorted_data) + 1) / float(len(sorted_data))
+    return sorted_data, cdf
+
+
+def sim_real_cdf_overlay(real_spend, simulated_spend):
+    cmp_simulated_daily_spends = np.random.choice(
+        simulated_spend, size=len(real_spend), replace=False
+    )
+    x_real, cdf_real = empirical_cdf(real_spend)
+    x_sim, cdf_sim = empirical_cdf(cmp_simulated_daily_spends)
+
+    plt.figure()
+    plt.plot(x_real, cdf_real, label="Empirical CDF")
+    plt.plot(x_sim, cdf_sim, label="Simulated CDF")
+    plt.title("CDF Comparison: Daily Totals")
+    plt.xlabel("Daily Spend")
+    plt.ylabel("Cumulative Probability")
+    plt.legend()
+    plt.show()
+
+
 def main():
     """
     Main function to demonstrate a workflow of:
@@ -678,6 +702,8 @@ def main():
     likelihoods, simulated_daily_spends = sophis_spend_likelihood_monte_carlo(
         spend_amounts, bucket_models, avg_bucket_spend
     )
+
+    sim_real_cdf_overlay(daily_spend["Amount"], simulated_daily_spends)
 
 
 if __name__ == "__main__":
