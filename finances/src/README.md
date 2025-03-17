@@ -1,5 +1,5 @@
-Simulating spend
-Overview
+# Simulating spend
+## Overview
 
 
 We wish to model daily spend data that can appear in multiple “buckets.” Each bucket $b$ has:
