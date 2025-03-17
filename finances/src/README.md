@@ -19,6 +19,7 @@ $p_b=Pr⁡(Y_b=1)$
 A lognormal (or gamma) regression for the positive spend amount $X_b$​ conditioned on $Y_b=1$.
 
 e.g a lognormal model with intercept $β0_b$​ and scale $σ_b$​, the conditional PDF is
+
 $$
 f_{Xb∣Yb=1}(x)  =  Lognormal ⁣(β_{0,b}, σ_b^2)
 $$.
@@ -42,6 +43,7 @@ We simulate $Z∈R^B$ as follows:
 Draw $Z∼N(0, Σ)$ from a multivariate normal with mean $0$ and covariance $Σ$.
 
 Convert each component to a uniform:
+
 $$
 U_b  =  Φ(Z_b),
 $$
@@ -50,6 +52,7 @@ where $Φ$ is the standard normal CDF.
 ### 4. Threshold for Bernoulli Indicators
 
 For each bucket $b$, we set:
+
 $$
 Y_b^{(\mathrm{sim})} =
 \begin{cases}
@@ -59,6 +62,7 @@ Y_b^{(\mathrm{sim})} =
 $$
 
 This ensures:
+
 $$
 Pr⁡(Y_b^{(sim)})  =  p_b,
 $$
@@ -68,6 +72,7 @@ matching the marginal probability from the fitted logistic model.
 ### 5. Draw Positive Amounts Conditionally
 
 If $Y_b^{(sim)}=1$, we draw a positive spend from bucket $b$’s fitted distribution. For a lognormal with intercept $β_{0,b}$​ and scale $σ_b$​:
+
 $$
 X_b^{(sim)}  ∼  exp⁡(β_{0,b}+σ_b Z^∗)\text{ for some random } Z^∗ ∼ N(0,1).
 $$
