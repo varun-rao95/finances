@@ -221,6 +221,7 @@ def spend_likelihood(amount, spend):
 
 
 def sophis_spend_likelihood(amount, model, mean_txn_value=100):
+    # TOOO: do correlations between buckets for prob of bucket i firing here too
     """
     Computes the probability of exceeding a certain spend level,
     given a model (negative binomial, poisson, or continuous).
@@ -271,16 +272,14 @@ def sophis_spend_likelihood(amount, model, mean_txn_value=100):
 
 
 def sophis_spend_likelihood_monte_carlo(
-    amount, bucket_models, avg_bucket_spend, num_simulations=10_000
+    Sigma, bucket_models, num_simulations=10_000, by_bucket=False
 ):
     """
     Monte Carlo simulation of spend likelihood using fitted bucket models.
 
     Args:
-        amount (float or list): Threshold amount(s) to assess. If a list is given, it
-            calculates probability for each amount in that list.
+        Sigma (np.array) BxB: Correlation matrix for buckets.
         bucket_models (dict): Dictionary of bucket thresholds -> fitted model.
-        avg_bucket_spend (dict): Dictionary of bucket thresholds -> mean spend for that bucket.
         num_simulations (int, optional): Number of Monte Carlo draws.
 
     Returns:
@@ -289,19 +288,27 @@ def sophis_spend_likelihood_monte_carlo(
             - probability: float or list of floats (if multiple `amount` values).
             - simulated_spend_array: A 1D NumPy array of simulated total daily spends.
     """
-    simulated_spend = simulate_daily_spend(
-        bucket_models, avg_bucket_spend, num_simulations
-    )
+    B = Sigma.shape[0]
+    Z = np.random.multivariate_normal(mean=np.zeros(B), cov=Sigma, size=num_simulations)
 
-    if isinstance(amount, list):
-        probability = [np.mean(simulated_spend > amt) for amt in amount]
-        for amt, prob in zip(amount, probability):
-            print(f"Probability of spending more than {amt:.2f}: {prob:.4f}")
-    else:
-        probability = np.mean(simulated_spend > amount)
-        print(f"Probability of spending more than {amount:.2f}: {probability:.4f}")
+    U = norm.cdf(Z)  # shape (N, B)
+    p_b = [bucket_models[idx]["logit"].predict([1])[0] for idx in range(B)]
+    Y_sim = (U <= p_b).astype(int)
+    X_sim = np.zeros_like(Y_sim, dtype=float)  # same shape, to store final spend
 
-    return probability, simulated_spend
+    for b in range(B):
+        active_rows = np.where(Y_sim[:, b] == 1)[0]
+        if "gamma" in bucket_models[b]:
+            X_sim[active_rows, b] = get_rvs_gamma(
+                len(active_rows), bucket_models[b]["gamma"]
+            )
+        elif "lognorm" in bucket_models[b]:
+            X_sim[active_rows, b] = get_rvs_lognorm(
+                len(active_rows), bucket_models[b]["lognorm"]
+            )
+    if by_bucket:
+        return X_sim
+    return X_sim.sum(axis=1)
 
 
 def get_txns_per_day(df, colname="Transactions"):
@@ -330,57 +337,43 @@ def get_txns_per_day(df, colname="Transactions"):
     return df_transactions_per_day
 
 
-def find_best_fit_model(df_amounts, df_txns_per_day, colname="Transactions"):
+def find_best_fit_model(X):
     """
-    Fits Poisson, Negative Binomial, Gamma, and Log-Normal models to the given data
-    and selects the best model by comparing AIC.
-
-    Args:
-        df_amounts (pd.DataFrame): Data containing 'Amount' (used for continuous distributions).
-        df_txns_per_day (pd.DataFrame): Data containing daily counts (for discrete distributions).
-        colname (str, optional): Name of the column in df_txns_per_day that holds
-            transaction counts.
-
-    Returns:
-        statsmodels.base.model.Results: The best-fitting model results object.
+    Compare two-part Gamma vs two-part Lognormal by AIC.
+    Return whichever has lower AIC.
     """
-    # Fit Poisson
-    poisson_model_results = sm.Poisson(
-        df_txns_per_day[colname], np.ones(len(df_txns_per_day))
-    ).fit(disp=0)
+    # Fit each two-part model
+    res_gamma = fit_two_part_gamma(X)
+    res_lognorm = fit_two_part_lognorm(X)
 
-    # Fit Negative Binomial
-    nbinom_model_results = sm.NegativeBinomial(
-        df_txns_per_day[colname], np.ones(len(df_txns_per_day))
-    ).fit(disp=0)
+    gamma_mod = res_gamma["gamma"]
+    print("Gamma intercept:", gamma_mod.params)
+    print("Gamma scale:", gamma_mod.scale)  # the dispersion
 
-    # Fit Gamma
-    gamma_model_results = sm.GLM(
-        df_amounts["Amount"],
-        sm.add_constant(np.ones(len(df_amounts))),
-        family=sm.families.Gamma(),
-    ).fit(disp=0)
+    lognorm_mod = res_lognorm["lognorm"]
+    b0 = lognorm_mod.params[0]  # the intercept on the log scale
+    sigma2 = lognorm_mod.scale  # residual variance on the log scale
+    sigma = np.sqrt(sigma2)  # std dev on the log scale
+    print(f"Lognormal intercept (b0): {b0}")
+    print(f"Lognormal std dev on log scale (sigma): {sigma}")
+    mean_lognormal = np.exp(b0 + 0.5 * sigma2)
+    print(f"Implied mean in original units: {mean_lognormal}")
+    median_lognormal = np.exp(b0)
+    print(f"Implied median in original units: {median_lognormal}")
 
-    # Fit Log-Normal
-    lognorm_model_results = sm.OLS(
-        np.log(df_amounts["Amount"]), sm.add_constant(np.ones(len(df_amounts)))
-    ).fit(disp=0)
+    aic_gamma = two_part_aic(res_gamma)
+    aic_ln = two_part_aic(res_lognorm)
+    print(f"Two-Part Gamma AIC:    {aic_gamma:.2f}")
+    print(f"Two-Part Lognormal AIC:{aic_ln:.2f}")
 
-    models = {
-        "Poisson": poisson_model_results,
-        "Negative Binomial": nbinom_model_results,
-        "Gamma": gamma_model_results,
-        "Log-Normal": lognorm_model_results,
-    }
-
-    # Choose the best model by min AIC
-    best_model_name, best_model_results = min(
-        models.items(),
-        key=lambda item: item[1].aic,
-    )
-    print(f"\nBest model: {best_model_name} with AIC: {best_model_results.aic}")
-
-    return best_model_results
+    if aic_gamma < aic_ln:
+        print("Best model: Two-Part Gamma")
+        res_gamma["txns"] = X
+        return res_gamma
+    else:
+        print("Best model: Two-Part Lognormal")
+        res_lognorm["txns"] = X
+        return res_lognorm
 
 
 def simulate_spend(model, n=1000, plot=False):
@@ -408,66 +401,20 @@ def simulate_spend(model, n=1000, plot=False):
     return samples
 
 
-def simulate_daily_spend(bucket_models, avg_bucket_spend, num_simulations=10_000):
-    """
-    Monte Carlo simulation of daily spend using a collection of fitted models
-    (one per 'bucket'). Each model handles a portion of spend or transaction distribution.
+def get_rvs_lognorm(num_draws, lognorm_res):
+    b0 = lognorm_res.params[0]
+    sigma2 = lognorm_res.scale
+    sigma = np.sqrt(sigma2)
+    return lognorm.rvs(s=sigma, scale=np.exp(b0), size=num_draws)
 
-    Args:
-        bucket_models (dict): Mapping of bucket threshold -> model result object.
-        avg_bucket_spend (dict): Mapping of bucket threshold -> average spend for that bucket.
-        num_simulations (int, optional): Number of daily simulations.
 
-    Returns:
-        np.ndarray: Array of size `num_simulations` with total spend for each simulated day.
-    """
-    daily_spends = np.zeros(num_simulations)
-
-    for bucket, model_results in bucket_models.items():
-        # Check model type and simulate accordingly
-        if isinstance(
-            model_results,
-            statsmodels.discrete.discrete_model.NegativeBinomialResultsWrapper,
-        ):
-            predicted_mean_nb = model_results.predict()[0]
-            alpha = model_results.scale
-            n_param = 1.0 / alpha
-            p_param = n_param / (n_param + predicted_mean_nb)
-            counts = nbinom.rvs(n_param, p_param, size=num_simulations)
-            spend_for_bucket = counts * avg_bucket_spend[bucket]
-
-        elif isinstance(
-            model_results, statsmodels.discrete.discrete_model.PoissonResultsWrapper
-        ):
-            predicted_mean_poisson = model_results.predict()[0]
-            counts = poisson.rvs(predicted_mean_poisson, size=num_simulations)
-            spend_for_bucket = counts * avg_bucket_spend[bucket]
-
-        elif isinstance(
-            model_results, statsmodels.genmod.generalized_linear_model.GLMResultsWrapper
-        ):
-            # Interpreted as a Gamma model
-            shape = model_results.params[0]  # Intercept (rough approximation)
-            scale = model_results.scale
-            spend_for_bucket = gamma.rvs(shape, scale=scale, size=num_simulations)
-
-        elif isinstance(
-            model_results, statsmodels.regression.linear_model.RegressionResultsWrapper
-        ):
-            # Interpreted as a LogNormal model
-            mean_log = model_results.params[0]
-            std_log = model_results.bse[0]
-            spend_for_bucket = lognorm.rvs(
-                std_log, scale=np.exp(mean_log), size=num_simulations
-            )
-
-        else:
-            # If other model types appear in future, handle here
-            spend_for_bucket = np.zeros(num_simulations)
-
-        daily_spends += spend_for_bucket
-
-    return daily_spends
+def get_rvs_gamma(num_draws, gamma_res):
+    beta0 = gamma_res.params[0]
+    phi = gamma_res.scale
+    shape = 1.0 / phi
+    mean_ = np.exp(beta0)
+    rate = shape / mean_
+    return gamma.rvs(a=shape, scale=1.0 / rate, size=num_draws)
 
 
 def compare_distribution_for_two_time_periods(df1, df2):
@@ -570,62 +517,167 @@ def kde_bucket_thresholds(amount, bucket_thresholds):
     return len(bucket_thresholds)
 
 
-def fit_models_for_each_bucket(df, bucket_thresholds):
+def fit_two_part_gamma(X):
     """
-    Splits the data into buckets, finds best fit model for each bucket, and calculates
-    average spend within each bucket.
-
-    Args:
-        df (pd.DataFrame): DataFrame with "bucket" column assigned (via `kde_bucket_thresholds`)
-            and "Amount".
-        bucket_thresholds (list): List of threshold values that define buckets.
+    Fits a two-part model to daily spend amounts X:
+      1) Logistic regression for zero vs. > 0
+      2) Gamma GLM for strictly positive data
 
     Returns:
-        tuple: (bucket_models, avg_bucket_spend)
-            - bucket_models: dict of bucket threshold -> best fit model
-            - avg_bucket_spend: dict of bucket threshold -> average spend for that bucket
+        dict with keys:
+            'logit': fitted logistic model (statsmodels LogitResults)
+            'gamma': fitted gamma GLM (statsmodels GLMResults)
     """
+
+    # -------------------------------------------------------
+    # 1) Logistic Model: P(spend > 0)
+    # -------------------------------------------------------
+    # Binary indicator
+    y_bin = (X > 0).astype(int)
+
+    # Minimal "design matrix" = just intercept
+    # (Or add other features if you prefer)
+    X_bin = np.ones(len(X))  # 1-column of intercepts
+
+    # Fit logistic
+    logit_mod = sm.Logit(y_bin, X_bin, missing="drop").fit(disp=0)
+    ll_logit = logit_mod.llf
+    k_logit = logit_mod.df_model + 1
+
+    # -------------------------------------------------------
+    # 2) Gamma Model for positive spend
+    # -------------------------------------------------------
+    # Subset to positive amounts
+    Xpos = X[X > 0]
+    # Design matrix for gamma (again, just intercept for simplicity)
+    Gpos = np.ones((len(Xpos), 1))  # shape (n,1) => a single column of 1s
+
+    gamma_mod = sm.GLM(
+        Xpos, Gpos, family=sm.families.Gamma(link=sm.genmod.families.links.log())
+    ).fit(disp=0)
+    ll_gamma = gamma_mod.llf
+    k_gamma = gamma_mod.df_model + 1
+
+    combined_loglike = ll_logit + ll_gamma
+    total_params = k_logit + k_gamma
+
+    return {
+        "logit": logit_mod,
+        "gamma": gamma_mod,
+        "loglike": combined_loglike,
+        "k": total_params,
+    }
+
+
+def fit_two_part_lognorm(X):
+    """
+    Two-part model for daily spend X:
+      1) Logistic regression for P(X>0)
+      2) OLS on log(X) for X>0 => Lognormal
+
+    Returns:
+        {
+            'logit': <LogitResults>,
+            'lognorm': <RegressionResults>,
+            'loglike': combined_loglike,
+            'k': total_num_params
+        }
+    """
+    import statsmodels.api as sm
+    import numpy as np
+
+    # -------------------------------------------------------
+    # 1) Logistic Model: P(spend > 0)
+    # -------------------------------------------------------
+    # Binary indicator
+    y_bin = (X > 0).astype(int)
+    X_bin = np.ones(len(X))
+    logit_res = sm.Logit(y_bin, X_bin, missing="drop").fit(disp=0)
+    ll_logit = logit_res.llf
+    k_logit = logit_res.df_model + 1
+
+    # -------------------------------------------------------
+    # (2) OLS on log(X>0)
+    # -------------------------------------------------------
+    # Subset to positive amounts
+    X_pos = X[X > 0]
+    X_ln = np.log(X_pos)
+    # Intercept only
+    G_ln = np.ones((len(X_pos), 1))
+    ln_res = sm.OLS(X_ln, G_ln).fit(disp=0)
+
+    # To get the OLS log-likelihood:
+    # statsmodels sets ln_res.llf. We'll use that directly.
+    ll_ln = ln_res.llf
+    k_ln = ln_res.df_model + 1
+
+    combined_loglike = ll_logit + ll_ln
+    total_params = k_logit + k_ln
+
+    return {
+        "logit": logit_res,
+        "lognorm": ln_res,
+        "loglike": combined_loglike,
+        "k": total_params,
+    }
+
+
+def two_part_aic(two_part_res):
+    """
+    Compute the AIC for a two-part model result dictionary
+    which has:
+      'loglike': sum of log-likelihoods
+      'k': total number of parameters
+    """
+    ll = two_part_res["loglike"]
+    k = two_part_res["k"]
+    return -2 * ll + 2 * k
+
+
+def fit_models_for_each_bucket(df, bucket_thresholds):
     bucket_models = {}
-    avg_bucket_spend = {}
+
+    global_min = df.Date.min()
+    global_max = df.Date.max()
+    new_index = pd.date_range(start=global_min, end=global_max, freq="D")
 
     for idx, threshold in enumerate(bucket_thresholds):
-        # Data for this bucket index
         bucket_data = df[df["bucket"] == idx]
         if bucket_data.empty:
             continue
 
-        # Prepare daily transaction and daily amounts
-        bucket_txns_per_day = (
-            get_txns_per_day(bucket_data)
-            .groupby("Date")["Transactions"]
-            .sum()
-            .reset_index()
-        )
+        # Summarize daily
         bucket_data_amounts = bucket_data.groupby("Date")["Amount"].sum().reset_index()
 
-        # Reindex to fill missing days
+        # Reindex to fill missing days => 0 spend
         bucket_data_amounts.index = bucket_data_amounts["Date"]
-        new_index = pd.date_range(
-            start=bucket_data_amounts.index.min(),
-            end=bucket_data_amounts.index.max(),
-            freq="D",
-        )
-        bucket_data_amounts = bucket_data_amounts.reindex(new_index, fill_value=0.01)
+        bucket_data_amounts = bucket_data_amounts.reindex(new_index)
         bucket_data_amounts["Date"] = bucket_data_amounts.index
 
-        # Find best fit for this bucket
-        best_model = find_best_fit_model(bucket_data_amounts, bucket_txns_per_day)
+        X = bucket_data_amounts["Amount"].fillna(0)
 
-        # Store the best model
-        bucket_models[threshold] = best_model
+        print(f"\n----- Bucket {idx}, threshold {threshold} -----")
+        best_two_part = find_best_fit_model(X)
 
-        # Calculate average spend for this bucket
-        # (Exclude the artificially filled 0.01 rows)
-        avg_bucket_spend[threshold] = bucket_data_amounts[
-            bucket_data_amounts["Amount"] != 0.01
-        ]["Amount"].mean()
+        # best_two_part is a dictionary { 'logit':..., 'gamma' or 'lognorm':..., 'loglike':..., 'k':...}
+        bucket_models[idx] = best_two_part
 
-    return bucket_models, avg_bucket_spend
+    return bucket_models
+
+
+def get_bucket_correlations(df):
+    day_bucket_counts = (
+        df.groupby(["Date", "bucket"])["Amount"]
+        .sum()  # or count() if you only need to know "did it happen?"
+        .gt(0)  # True/False if sum>0
+        .unstack(fill_value=0)
+        .astype(int)
+    )
+    full_dates = pd.date_range(
+        start=day_bucket_counts.index.min(), end=day_bucket_counts.index.max(), freq="D"
+    )
+    day_bucket_counts = day_bucket_counts.reindex(full_dates, fill_value=0)
+    return day_bucket_counts.corr(method="spearman").values
 
 
 def empirical_cdf(data):
@@ -663,8 +715,8 @@ def main():
     - Fitting models for each bucket
     - Monte Carlo simulation for probability of exceeding various spend amounts
     """
-    df_2024 = load_data(filter_by=">=2024")
-    df_2023 = load_data(filter_by="<=2023")
+    df_2024 = load_data(filter_by=">=2024-01-01")
+    df_2023 = load_data(filter_by="<=2023-12-31")
 
     df_combined = pd.concat([df_2023, df_2024])
     df_filtered = filter_category(
@@ -684,8 +736,16 @@ def main():
     )
 
     # Identify bucket thresholds with local minima from daily spend distribution
-    bucket_thresholds = analyze_daily_patterns(df_filtered)
-    bucket_thresholds = bucket_thresholds[:6]  # keep the first 6 minima, for example
+    # bucket_thresholds = analyze_daily_patterns(df_filtered)
+    # bucket_thresholds = bucket_thresholds[:6]  # keep the first 6 minima, for example
+    bucket_thresholds = [
+        166.49687688,
+        218.5209009,
+        286.15213213,
+        312.16414414,
+        348.58096096,
+        421.41459459,
+    ]  # just hardcoding for now
 
     # Create a 'bucket' column
     df_filtered["bucket"] = df_filtered["Amount"].apply(
@@ -693,15 +753,17 @@ def main():
     )
 
     # Fit models for each bucket
-    bucket_models, avg_bucket_spend = fit_models_for_each_bucket(
-        df_filtered, bucket_thresholds
-    )
+    bucket_thresholds.append(np.nan)  # we want to fit a model for the last bucket
+    bucket_models = fit_models_for_each_bucket(df_filtered, bucket_thresholds)
+    Sigma = get_bucket_correlations(df_filtered)
 
     # Example: run a Monte Carlo to see probabilities for multiple spend levels
+    simulated_daily_spends = sophis_spend_likelihood_monte_carlo(Sigma, bucket_models)
+
     spend_amounts = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-    likelihoods, simulated_daily_spends = sophis_spend_likelihood_monte_carlo(
-        spend_amounts, bucket_models, avg_bucket_spend
-    )
+    probability = [np.mean(simulated_daily_spends > amt) for amt in spend_amounts]
+    for amt, prob in zip(spend_amounts, probability):
+        print(f"Probability of spending more than {amt:.2f}: {prob:.4f}")
 
     sim_real_cdf_overlay(daily_spend["Amount"], simulated_daily_spends)
 
