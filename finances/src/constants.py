@@ -6,4 +6,6 @@ MONARCH_ACCOUNT_NAME_MAPPING = {
     "Apple Card": "Apple Card",
     "SoFi Savings (...3354)": "SOFI Saving",
     "Apple Cash": "Apple Cash",
+    "Personal Profile": "Venmo",
+    "Robinhood Credit Card (...6683)": "Robinhood Credit Card",
 }
