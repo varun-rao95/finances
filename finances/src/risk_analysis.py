@@ -33,6 +33,8 @@ def get_price_for_ticker(
     append_to_csv=False,
     overwrite_csv=False,
 ):
+    start_date = "2020-07-17"
+    end_date = "2025-04-29"
     data = safe_download(ticker, start=start_date, end=end_date, delay=30)
     data["Daily Return"] = data["Adj Close"].pct_change()
     data["Cumulative Return"] = (1 + data["Daily Return"]).cumprod()
@@ -56,7 +58,7 @@ def get_listed_tickers(portfolio):
 
 
 def compute_portfolio_shares(portfolio):
-    all_dates = pd.date_range(portfolio.date.min(), "2025-01-20")  # to current day
+    all_dates = pd.date_range(portfolio.date.min(), "2025-04-29")  # to current day
     listed_tickers = get_listed_tickers(portfolio)
 
     portfolio["date"] = pd.to_datetime(portfolio["date"])
@@ -99,7 +101,7 @@ def load_and_clean_returns(ticker):
 
 
 def load_prices_for_all_tickers(portfolio):
-    all_dates = pd.date_range(portfolio.date.min(), "2025-01-20")  # to current day
+    all_dates = pd.date_range(portfolio.date.min(), "2025-04-29")  # to current day
     listed_tickers = get_listed_tickers(portfolio)
     # TODO: get latest price for latest day
     prices = (
@@ -112,7 +114,7 @@ def load_prices_for_all_tickers(portfolio):
 
 
 def load_returns_for_all_tickers(portfolio):
-    all_dates = pd.date_range(portfolio.date.min(), "2025-01-20")  # to current day
+    all_dates = pd.date_range(portfolio.date.min(), "2025-04-29")  # to current day
     listed_tickers = get_listed_tickers(portfolio)
     returns = (
         pd.concat([load_and_clean_returns(ticker) for ticker in listed_tickers], axis=1)
@@ -172,7 +174,7 @@ def main():
     X = sm.add_constant(df_reg["sp500_excess"])
     y = df_reg["portfolio_excess"]
     print("------------------- OLS -------------------")
-    print(f"===== Date Range: {portfolio.date.min()} to 2025-01-20 =====")
+    print(f"===== Date Range: {portfolio.date.min()} to 2025-04-29 =====")
     model = sm.OLS(y, X).fit()
     print(model.params)
     print(model.t_test([1, 0]))
