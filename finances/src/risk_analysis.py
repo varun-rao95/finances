@@ -5,9 +5,25 @@ import sqlite3
 import os
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
+import time
 
 DB_NAME = "mint_transactions.db"
 EXCLUDE_TICKERS = ["FIT"]
+
+
+def safe_download(ticker, start, end, retries=5, delay=5):
+    for attempt in range(retries):
+        try:
+            data = yf.download(ticker, start=start, end=end, auto_adjust=False)
+            if not data.empty:
+                return data
+            else:
+                print(f"[{ticker}] Empty DataFrame. Retry {attempt + 1}/{retries}...")
+        except Exception as e:
+            print(f"[{ticker}] Attempt {attempt + 1} failed: {e}")
+        time.sleep(delay)
+    print(f"[{ticker}] Failed after {retries} retries.")
+    return pd.DataFrame()
 
 
 def get_price_for_ticker(
@@ -17,7 +33,7 @@ def get_price_for_ticker(
     append_to_csv=False,
     overwrite_csv=False,
 ):
-    data = yf.download(ticker, start=start_date, end=end_date)
+    data = safe_download(ticker, start=start_date, end=end_date, delay=30)
     data["Daily Return"] = data["Adj Close"].pct_change()
     data["Cumulative Return"] = (1 + data["Daily Return"]).cumprod()
 
