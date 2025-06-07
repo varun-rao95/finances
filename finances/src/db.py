@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass
 from typing import Iterable
 
+
 # === Dataclasses for tables ===
 @dataclass
 class Portfolio:
@@ -12,6 +13,7 @@ class Portfolio:
     num_shares: int
     amount: float
     date: str
+
 
 @dataclass
 class Transaction:
@@ -25,6 +27,7 @@ class Transaction:
     Labels: str | None
     Notes: str | None
 
+
 # === Path + Connection setup ===
 def get_conn():
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -33,26 +36,30 @@ def get_conn():
     cx.row_factory = sqlite3.Row
     return cx
 
+
 # === Example: Insert + Fetch for Portfolio ===
 def insert_portfolio(p: Portfolio) -> int:
     with get_conn() as cx:
         cur = cx.execute(
             """INSERT INTO portfolio (ticker, buy, num_shares, amount, date)
                VALUES (?, ?, ?, ?, ?)""",
-            (p.ticker, p.buy, p.num_shares, p.amount, p.date)
+            (p.ticker, p.buy, p.num_shares, p.amount, p.date),
         )
         return cur.lastrowid
+
 
 def all_portfolios() -> Iterable[Portfolio]:
     with get_conn() as cx:
         for row in cx.execute("SELECT * FROM portfolio"):
             yield Portfolio(**row)
 
+
 # === Example: Fetch + Insert for Transactions ===
 def all_transactions() -> Iterable[Transaction]:
     with get_conn() as cx:
         for row in cx.execute("SELECT * FROM transactions"):
             yield Transaction(**row)
+
 
 def insert_transaction(txn: Transaction) -> None:
     with get_conn() as cx:
@@ -75,6 +82,7 @@ def insert_transaction(txn: Transaction) -> None:
                 txn.Notes,
             ),
         )
+
 
 def insert_transactions(txns: Iterable[Transaction]) -> None:
     with get_conn() as cx:
@@ -100,4 +108,3 @@ def insert_transactions(txns: Iterable[Transaction]) -> None:
                 for t in txns
             ],
         )
-

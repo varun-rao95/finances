@@ -23,13 +23,14 @@ def main(dry_run=True):
             "SELECT AccountName, MAX(Date) as LatestDate FROM transactions GROUP BY AccountName"
         ):
             account_name, latest_date = row
-            latest_dates[account_name] = latest_date 
+            latest_dates[account_name] = latest_date
 
         # Apply the account name mapping and filter the DataFrame to include only new transactions
         monarch_df["Account"] = monarch_df["Account"].map(MONARCH_ACCOUNT_NAME_MAPPING)
         filtered_df = monarch_df[
             monarch_df.apply(
-                lambda x: x["Date"] > latest_dates.get(x["Account"], "0000-00-00"), axis=1
+                lambda x: x["Date"] > latest_dates.get(x["Account"], "0000-00-00"),
+                axis=1,
             )
         ]
 
@@ -38,7 +39,9 @@ def main(dry_run=True):
             print(
                 "Dry-run mode enabled. Records dumped to your downloads folder for review:"
             )
-            filtered_df.to_csv(os.path.expanduser("~/Downloads/filtered_monarch_txns.csv"))
+            filtered_df.to_csv(
+                os.path.expanduser("~/Downloads/filtered_monarch_txns.csv")
+            )
         else:
             # Insert the filtered data into the SQLite database
             transactions = [
@@ -51,11 +54,12 @@ def main(dry_run=True):
                     Category=row["Category"],
                     AccountName=row["Account"],
                     Labels=row.get("Tags", ""),
-                    Notes=row.get("Notes", "")
+                    Notes=row.get("Notes", ""),
                 )
                 for _, row in filtered_df.iterrows()
             ]
             insert_transactions(transactions)
+
 
 if __name__ == "__main__":
     parser = ArgumentParser(

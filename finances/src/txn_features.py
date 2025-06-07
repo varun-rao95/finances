@@ -1,7 +1,7 @@
 # txn_features.py
 """
 Feature engineering & time‑aware train/test splitting utilities
-for next‑day (and longer‑horizon) spend prediction.  
+for next‑day (and longer‑horizon) spend prediction.
 
 Designed to plug into the existing two‑part bucket simulator: you build a
 daily feature frame → obtain train/test slices → hand the train slice to
@@ -12,7 +12,7 @@ Assumptions
 * Raw transactions DataFrame has at minimum columns:
     - Date (datetime or string parsable)
     - Amount (float)
-* Each row is a single transaction.  
+* Each row is a single transaction.
 * Caller decides whether to pre‑filter categories, outliers, etc.
 
 Typical usage
@@ -37,6 +37,7 @@ from typing import List, Dict, Tuple, Iterable
 ###############################################################################
 # 1.  Daily feature engineering
 ###############################################################################
+
 
 def _aggregate_daily(df: pd.DataFrame) -> pd.DataFrame:
     """Collapse raw transaction rows into **one row per day** with primitive
@@ -93,11 +94,15 @@ def build_daily_feature_frame(df_txns: pd.DataFrame) -> pd.DataFrame:
 
     # Days since last high‑spend
     last_high = (~(daily["total_spend"] > high_threshold)).astype(int).cumsum()
-    daily["days_since_high_spend"] = last_high - last_high.where(daily["total_spend"] > high_threshold).ffill().fillna(0).astype(int)
+    daily["days_since_high_spend"] = last_high - last_high.where(
+        daily["total_spend"] > high_threshold
+    ).ffill().fillna(0).astype(int)
 
     # Consecutive days below low_threshold
     below = daily["total_spend"] < low_threshold
-    daily["consecutive_days_below_threshold"] = below.groupby((~below).cumsum()).cumcount() + 1
+    daily["consecutive_days_below_threshold"] = (
+        below.groupby((~below).cumsum()).cumcount() + 1
+    )
     daily.loc[~below, "consecutive_days_below_threshold"] = 0
 
     # Calendar features
@@ -109,19 +114,25 @@ def build_daily_feature_frame(df_txns: pd.DataFrame) -> pd.DataFrame:
 
     return daily
 
+
 ###############################################################################
 # 2.  Targets
 ###############################################################################
 
-def add_next_day_target(df_daily: pd.DataFrame, target_col: str = "target_next_day") -> pd.DataFrame:
+
+def add_next_day_target(
+    df_daily: pd.DataFrame, target_col: str = "target_next_day"
+) -> pd.DataFrame:
     """Adds next‑day spend target column, dropping last row with NaN target."""
     df = df_daily.copy()
     df[target_col] = df["total_spend"].shift(-1)
     return df.dropna(subset=[target_col])
 
+
 ###############################################################################
 # 3.  Time‑based splits
 ###############################################################################
+
 
 def chronological_75205_split(df: pd.DataFrame) -> Tuple[pd.Index, pd.Index, pd.Index]:
     """Simple 75/20/5 chronological split.
@@ -165,20 +176,27 @@ def generate_weekly_splits(
             splits.append(
                 {
                     "anchor": anchor,
-                    "train_idx": df.index[(df.index >= train_start) & (df.index <= train_end)],
-                    "test_idx": df.index[(df.index >= test_start) & (df.index <= test_end)],
+                    "train_idx": df.index[
+                        (df.index >= train_start) & (df.index <= train_end)
+                    ],
+                    "test_idx": df.index[
+                        (df.index >= test_start) & (df.index <= test_end)
+                    ],
                     "cv_idx": df.index[(df.index >= cv_start) & (df.index <= cv_end)],
                 }
             )
     return splits
 
+
 ###############################################################################
 # 4.  Convenience wrappers
 ###############################################################################
 
+
 def make_feature_target_frame(raw_df: pd.DataFrame) -> pd.DataFrame:
     """Pipe convenience: raw → features → target column → returns frame ready for splits."""
     return add_next_day_target(build_daily_feature_frame(raw_df))
+
 
 ###############################################################################
 # __main__ quick demo (optional)
@@ -186,17 +204,20 @@ def make_feature_target_frame(raw_df: pd.DataFrame) -> pd.DataFrame:
 if __name__ == "__main__":
     # quick smoke test with a tiny dummy DataFrame
     rng = pd.date_range("2025-01-01", periods=100, freq="D")
-    dummy = pd.DataFrame({
-        "Date": np.repeat(rng, 3),  # 3 txns per day
-        "Amount": np.random.lognormal(mean=3, sigma=0.5, size=len(rng) * 3),
-    })
+    dummy = pd.DataFrame(
+        {
+            "Date": np.repeat(rng, 3),  # 3 txns per day
+            "Amount": np.random.lognormal(mean=3, sigma=0.5, size=len(rng) * 3),
+        }
+    )
 
     frame = make_feature_target_frame(dummy)
     print(frame.head())
 
     train_idx, test_idx, cv_idx = chronological_75205_split(frame)
-    print("Train size", len(train_idx), "Test size", len(test_idx), "CV size", len(cv_idx))
+    print(
+        "Train size", len(train_idx), "Test size", len(test_idx), "CV size", len(cv_idx)
+    )
 
     splits = generate_weekly_splits(frame)
     print("Generated", len(splits), "weekly splits")
-

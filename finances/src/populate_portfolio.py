@@ -65,7 +65,7 @@ def main(csv_path, dry_run=False, skip_rows=0, skip_bottom=14):
     reader = read_csv_skip_footer(csv_path, skip_top=skip_rows, skip_bottom=skip_bottom)
     txns_to_insert = []
     portfolio_to_insert = []
-    
+
     for row in reader:
         # 1) Parse Run Date
         run_date_str = row[RUN_DATE].strip()  # e.g. "12/31/2021"
@@ -134,10 +134,15 @@ def main(csv_path, dry_run=False, skip_rows=0, skip_bottom=14):
 
             # If "Action" indicates a buy
             # e.g. if "BOUGHT", "REINVESTMENT", or "DIVIDEND" => buy=True
-            is_buy = "Buy" in trans_code if trans_code else any(
-                word in action.upper() for word in ["BOUGHT", "REINVESTMENT", "DIVIDEND"]
-            )        
-            
+            is_buy = (
+                "Buy" in trans_code
+                if trans_code
+                else any(
+                    word in action.upper()
+                    for word in ["BOUGHT", "REINVESTMENT", "DIVIDEND"]
+                )
+            )
+
             date_portfolio = settlement_date.strftime("%Y-%m-%d")
             portfolio = Portfolio(
                 id=None,
@@ -149,9 +154,9 @@ def main(csv_path, dry_run=False, skip_rows=0, skip_bottom=14):
             )
             if dry_run:
                 print(f"[DRY RUN] Would insert portfolio: {portfolio}")
-                
+
             else:
-                 portfolio_to_insert.append(portfolio)
+                portfolio_to_insert.append(portfolio)
 
     # Finalize
     if not dry_run:
@@ -162,6 +167,7 @@ def main(csv_path, dry_run=False, skip_rows=0, skip_bottom=14):
         print("Committed all inserts.")
     else:
         print("DRY RUN complete. No changes committed.")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
