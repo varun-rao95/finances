@@ -1,103 +1,98 @@
 # fit_txns_to_statsmodels_features.py
 """
-Feature‑conditioned, bucketed two‑part spend model.
+Feature‑conditioned, bucketed two‑part spend model (v2).
 
-This module *extends* your original `fit_txns_to_statsmodels.py` pipeline
-without touching its univariate logic.  Import what you need from the
-original file (e.g. `kde_bucket_thresholds`, `fit_two_part_gamma`,
-`fit_two_part_lognorm`) and add **feature‑aware** Bernoulli + Lognormal
-models per bucket.
+Extends your original pipeline but now handles **degenerate buckets** where
+`active` is all‑ones or all‑zeros (no variance → singular matrix in Logit).
 
-Quick usage -------------------------------------------------------------------
->>> from fit_txns_to_statsmodels_features import (
-        BucketedTwoPartModel,  evaluate_splits
-    )
->>> raw = load_data()                                 # from original module
->>> frame = make_feature_target_frame(raw)            # from txn_features.py
->>> splits = generate_weekly_splits(frame)            # txn_features.py
->>> bucket_edges = [...]                              # your thresholds
->>> results = evaluate_splits(frame, bucket_edges, splits, n_mc=500)
+Strategy
+--------
+* If `active` has both 0 and 1 → fit full Logistic as before.
+* If `active` is **constant** → store scalar `p_active` (0.0 or 1.0) and
+  skip the Logit fit.
 
-`results` is a DataFrame with MAE / RMSE per split; inspect and aggregate
-as you like.
+Everything else stays identical.  The simulator recognises the presence of
+`p_active` and treats those buckets deterministically.
 """
 from __future__ import annotations
 
-from fit_txns_to_statsmodels import kde_bucket_thresholds
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 from typing import Dict, Sequence, List
 
-# ---------------------------------------------------------------------------
-# Helper — simple design‑matrix builder (add constant)
-# ---------------------------------------------------------------------------
+###############################################################################
+# Helper – build numeric design matrix w/ intercept, drop zero‑var columns
+###############################################################################
 
 
 def _add_const(X: pd.DataFrame | pd.Series) -> np.ndarray:
-    """
-    Ensure numeric 2-D array and prepend constant column for statsmodels.
-    """
     if isinstance(X, pd.Series):
-        X = X.to_frame().T  # make it 2-D for a single row case
-    arr = X.astype(float).to_numpy()  # coerce bool/int/uint8 → float64
+        X = X.to_frame().T
+    arr = X.astype(float).to_numpy()
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    keep = arr.std(axis=0) > 1e-10
+    arr = arr[:, keep]
     return sm.add_constant(arr, has_constant="add")
 
 
-# ---------------------------------------------------------------------------
+###############################################################################
 # Core model class
-# ---------------------------------------------------------------------------
+###############################################################################
 
 
 class BucketedTwoPartModel:
-    """Bernoulli(logit)  +  LogNormal(OLS)  per bucket, conditioned on features."""
+    """Two‑part bucket model.
 
-    def __init__(self, bucket_edges: Sequence[float]):
+    * **Feature‑conditioned** logistic + log‑normal for buckets with enough data.
+    * **Fallback dummy** (global Bernoulli + global log‑normal intercept) for
+      sparse buckets – either:
+        • sample count < `min_obs`, **or**
+        • it is the final open‑ended bucket (index == len(bucket_edges)).
+    """
+
+    def __init__(self, bucket_edges: Sequence[float], min_obs: int = 50):
         self.bucket_edges = list(bucket_edges)
+        self.min_obs = min_obs
         self.bucket_models: Dict[int, Dict[str, object]] = {}
 
-    # -------------------------------------------------------------------
-    # Public API
-    # -------------------------------------------------------------------
-
+    # ------------------------------------------------------------------
     def fit(self, X: pd.DataFrame, y: pd.Series) -> "BucketedTwoPartModel":
-        """Fit per‑bucket two‑part models using feature matrix X and total‑spend y."""
-        # Map each spend value -> bucket index (like original code)
         bucket_idx = y.apply(lambda v: kde_bucket_thresholds(v, self.bucket_edges))
         self.bucket_models = {}
+        overflow_idx = len(self.bucket_edges)  # last implicit bucket
+
         for b in bucket_idx.unique():
             idx_b = bucket_idx == b
             y_b = y[idx_b]
             X_b = X.loc[idx_b]
-
-            # Binary activity indicator (any spend > 0 in that bucket)
             active = (y_b > 0).astype(int)
-            try:
-                logit_res = sm.Logit(active, _add_const(X_b)).fit(disp=0)
-            except:
-                print("Bucket", b, "shape", X_b.shape)
-                print("Cols variance:\n", X_b.var())
-                print("active value counts:\n", active.value_counts())
+            n_rows = len(y_b)
 
-                const_in_active = X_b[active == 1].var() < 1e-10
-                print(
-                    "Zero-var cols inside active==1 subset:\n",
-                    const_in_active[const_in_active].index,
-                )
+            # Decide if we drop to dummy behaviour
+            need_dummy = (n_rows < self.min_obs) or (b == overflow_idx)
+            mods: Dict[str, object] = {}
 
-                raise
+            # ----------------- Bernoulli part -------------------------
+            if need_dummy or active.nunique() == 1:
+                mods["p_active"] = float(active.mean())  # could be 0/1 or small prob
+            else:
+                mods["logit"] = sm.Logit(active, _add_const(X_b)).fit(disp=0)
 
-            # If we never see positive spend for a bucket, skip sigma/mu
+            # ----------------- Log‑normal part ------------------------
             if active.sum() == 0:
-                self.bucket_models[b] = {"logit": logit_res, "lognorm": None}
-                continue
+                mods["lognorm"] = None
+            else:
+                y_pos = np.log(y_b[active == 1])
+                # If dummy: use intercept‑only; else use full features
+                if need_dummy:
+                    ln_res = sm.OLS(y_pos, np.ones((len(y_pos), 1))).fit(disp=0)
+                else:
+                    ln_res = sm.OLS(y_pos, _add_const(X_b[active == 1])).fit(disp=0)
+                mods["lognorm"] = ln_res
 
-            # Log(amount) for positive rows
-            y_pos = np.log(y_b[active == 1])
-            X_pos = X_b[active == 1]
-            ln_res = sm.OLS(y_pos, _add_const(X_pos)).fit(disp=0)
-
-            self.bucket_models[b] = {"logit": logit_res, "lognorm": ln_res}
+            self.bucket_models[b] = mods
         return self
 
     # -------------------------------------------------------------------
