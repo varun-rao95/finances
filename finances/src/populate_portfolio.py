@@ -1,5 +1,5 @@
 import csv
-import sqlite3
+from db import get_conn, insert_transactions, insert_portfolio, Portfolio, Transaction
 import os
 from datetime import datetime
 import argparse
@@ -63,6 +63,9 @@ def main(csv_path, dry_run=False, skip_rows=0, skip_bottom=14):
     cursor = conn.cursor()
 
     reader = read_csv_skip_footer(csv_path, skip_top=skip_rows, skip_bottom=skip_bottom)
+    txns_to_insert = []
+    portfolio_to_insert = []
+    
     for row in reader:
         # 1) Parse Run Date
         run_date_str = row[RUN_DATE].strip()  # e.g. "12/31/2021"
@@ -101,34 +104,27 @@ def main(csv_path, dry_run=False, skip_rows=0, skip_bottom=14):
 
         if not skip_transactions:
             # If not skipping, either insert or print (dry-run)
+            txn = Transaction(
+                Date=date_for_db,
+                Description=action,
+                OriginalDescription=original_desc,
+                Amount=amount,
+                TransactionType=txn_type,
+                Category=category,
+                AccountName=account_name,
+                Labels=None,
+                Notes=None,
+            )
             if dry_run:
-                print(
-                    f"[DRY RUN] Would insert into transactions: Date={date_for_db}, Desc='{action}', "
-                    f"OrigDesc='{original_desc}', Amount={amount}, Type={txn_type}, "
-                    f"Category={category}, Account={account_name}"
-                )
+                print(f"[DRY RUN] Would insert transaction: {txn}")
             else:
                 # Insert into transactions table
-                cursor.execute(
-                    """
-                    INSERT INTO transactions
-                    (Date, Description, OriginalDescription, Amount, TransactionType, Category, AccountName)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        date_for_db,
-                        action,
-                        original_desc,
-                        amount,
-                        txn_type,
-                        category,
-                        account_name,
-                    ),
-                )
+                txns_to_insert.append(txn)
 
         # 4) Insert into `portfolio` only if Settlement Date is present
         settlement_str = row.get(SETTLEMENT_DATE, "").strip()
         settlement_date = parse_date_mmddyyyy(settlement_str)
+        trans_code = row.get("Trans Code", "")
         if settlement_date and row.get("Trans Code", "") in ["Buy", "Sell"]:
             # We have a valid settlement date => that means we put it in portfolio
             try:
@@ -138,43 +134,34 @@ def main(csv_path, dry_run=False, skip_rows=0, skip_bottom=14):
 
             # If "Action" indicates a buy
             # e.g. if "BOUGHT", "REINVESTMENT", or "DIVIDEND" => buy=True
-            if row.get("Trans Code", ""):
-                is_buy = "Buy" in row.get("Trans Code")
-            else:
-                action_upper = action.upper()
-                is_buy = any(
-                    word in action_upper
-                    for word in ["BOUGHT", "REINVESTMENT", "DIVIDEND"]
-                )
-
-            ticker = symbol
-            portfolio_amount = amount
+            is_buy = "Buy" in trans_code if trans_code else any(
+                word in action.upper() for word in ["BOUGHT", "REINVESTMENT", "DIVIDEND"]
+            )        
+            
             date_portfolio = settlement_date.strftime("%Y-%m-%d")
-
+            portfolio = Portfolio(
+                id=None,
+                ticker=symbol,
+                buy=is_buy,
+                num_shares=quantity,
+                amount=amount,
+                date=date_portfolio,
+            )
             if dry_run:
-                print(
-                    f"[DRY RUN] Would insert into portfolio: "
-                    f"Ticker={ticker}, Buy={is_buy}, Shares={quantity}, Amount={portfolio_amount}, "
-                    f"Date={date_portfolio}"
-                )
+                print(f"[DRY RUN] Would insert portfolio: {portfolio}")
+                
             else:
-                cursor.execute(
-                    """
-                    INSERT INTO portfolio (ticker, buy, num_shares, amount, date)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (ticker, is_buy, quantity, portfolio_amount, date_portfolio),
-                )
+                 portfolio_to_insert.append(portfolio)
 
-    # 5) Commit at the end if not dry_run
+    # Finalize
     if not dry_run:
-        conn.commit()
+        if txns_to_insert:
+            insert_transactions(txns_to_insert)
+        for p in portfolio_to_insert:
+            insert_portfolio(p)
         print("Committed all inserts.")
     else:
         print("DRY RUN complete. No changes committed.")
-
-    conn.close()
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

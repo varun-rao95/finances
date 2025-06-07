@@ -1,8 +1,3 @@
-# coding: utf-8
-
-# TODO:
-# insert all new transactions per account
-# call as script with args
 import csv
 import sqlite3
 from datetime import datetime
@@ -209,8 +204,10 @@ def dump_apple_card_transactions():
 
 
 if __name__ == "__main__":
+    print("FUKCYOU MINT DEPRECATED")
+
     # Connect to SQLite database (or create it if it doesn't exist)
-    conn = sqlite3.connect("mint_transactions.db")
+    conn = sqlite3.connect("hullo.db")
     cursor = conn.cursor()
 
     # Create a table transactions table
