@@ -48,9 +48,56 @@ def all_portfolios() -> Iterable[Portfolio]:
         for row in cx.execute("SELECT * FROM portfolio"):
             yield Portfolio(**row)
 
-# === Example: Fetch for Transactions ===
+# === Example: Fetch + Insert for Transactions ===
 def all_transactions() -> Iterable[Transaction]:
     with get_conn() as cx:
         for row in cx.execute("SELECT * FROM transactions"):
             yield Transaction(**row)
+
+def insert_transaction(txn: Transaction) -> None:
+    with get_conn() as cx:
+        cx.execute(
+            """
+            INSERT INTO transactions (
+                Date, Description, OriginalDescription, Amount, TransactionType,
+                Category, AccountName, Labels, Notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                txn.Date,
+                txn.Description,
+                txn.OriginalDescription,
+                txn.Amount,
+                txn.TransactionType,
+                txn.Category,
+                txn.AccountName,
+                txn.Labels,
+                txn.Notes,
+            ),
+        )
+
+def insert_transactions(txns: Iterable[Transaction]) -> None:
+    with get_conn() as cx:
+        cx.executemany(
+            """
+            INSERT INTO transactions (
+                Date, Description, OriginalDescription, Amount, TransactionType,
+                Category, AccountName, Labels, Notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    t.Date,
+                    t.Description,
+                    t.OriginalDescription,
+                    t.Amount,
+                    t.TransactionType,
+                    t.Category,
+                    t.AccountName,
+                    t.Labels,
+                    t.Notes,
+                )
+                for t in txns
+            ],
+        )
 
