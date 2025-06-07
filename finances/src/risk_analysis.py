@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import yfinance as yf
-import sqlite3
+from db import get_conn
 import os
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
@@ -138,13 +138,9 @@ def rolling_beta(portfolio, market, window=30):
 
 
 def main():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    db_path = os.path.join(script_dir, DB_NAME)
-    conn = sqlite3.connect(db_path)
+    with get_conn() as conn:
+        portfolio = pd.read_sql_query("SELECT * FROM portfolio", conn)
 
-    portfolio = pd.read_sql_query(
-        "SELECT * FROM portfolio", conn
-    )  # exclude tickers here instead
     cumulative_shares = compute_portfolio_shares(portfolio)
     prices = load_prices_for_all_tickers(portfolio)
 
